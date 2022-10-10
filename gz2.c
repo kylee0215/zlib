@@ -187,9 +187,11 @@ int Write_LocalFileHeader(zip64_info *zi, char *filenameinzip, int level)
 	cur += 2;
 
 	zip64local_putValue(cur, UncompressedSize, 8);
+	/* zip64local_putValue(cur, 9, 8); */
 	cur += 8;
 
 	zip64local_putValue(cur, CompressedSize, 8);
+	/* zip64local_putValue(cur, 29, 8); */
 	cur += 8;
 
 	strncpy(zi->entry[zi->cur_entry].filename, filenameinzip, size_filename);
@@ -249,12 +251,19 @@ int Write_CentralFileHeader(zip64_info *zi)
 
 		// Compressed size
 		// set 0xffffffff for zip64, real compressed size is set in CentralDirFileHdr extra field
-		zip64local_putValue(cur, invalidValue, 4);
+		/* zip64local_putValue(cur, invalidValue, 4); */
+		if (zi->entry[i].totalCompressedData >= 0xffffffff)
+			zip64local_putValue(cur, invalidValue, 4);
+		else
+			zip64local_putValue(cur, zi->entry[i].totalCompressedData, 4);
 		cur += 4;
 
 		// Uncompressed size
 		// set 0xffffffff for zip64, real Uncompressed size is set in CentralDirFileHdr extra field
-		zip64local_putValue(cur, invalidValue, 4);
+		if (zi->entry[i].totalUncompressedData >= 0xffffffff)
+			zip64local_putValue(cur, invalidValue, 4);
+		else
+			zip64local_putValue(cur, zi->entry[i].totalUncompressedData, 4);
 		cur += 4;
 
 		// File name length
@@ -307,8 +316,10 @@ int Write_CentralFileHeader(zip64_info *zi)
 		zip64local_putValue(cur, zi->entry[i].loc_offset, 8);
 		cur += 8;
 
-		if (i == 0)
+		if (i == 0) {
 			zi->entry[i].cen_offset = zi->cur_offset; // save Offset of start of central directory
+			printf("cen_offset: %d\n", zi->entry[0].cen_offset);
+		}
 
 		size_t ret = zi->write(CentralDirFileHdr, cur - CentralDirFileHdr, zi);
 		if (ret != cur - CentralDirFileHdr) {
@@ -366,6 +377,7 @@ int Write_Zip64EOCDRecord(zip64_info *zi)
 	cur += 8;
 
 	/* size of the central directory */
+	printf("size_centraldir: %d\n", zi->size_centraldir);
 	err = zip64local_putValue(cur, zi->size_centraldir, 8);
 	cur += 8;
 
@@ -374,6 +386,7 @@ int Write_Zip64EOCDRecord(zip64_info *zi)
 	cur += 8;
 
 	zi->Zip64EOCDRecord_offset = zi->cur_offset;
+	printf("Zip64EOCDRecord_offset: %d\n", zi->Zip64EOCDRecord_offset);
 	zi->write(Zip64EOCDRecord, cur - Zip64EOCDRecord, zi);
 
 	free(Zip64EOCDRecord);
