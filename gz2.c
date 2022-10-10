@@ -54,6 +54,7 @@ typedef struct {
 	uLong size_centraldir;
 	unsigned char buffered_data[Z_BUFSIZE];
 	uInt pos_in_buffered_data;
+	uLong Zip64EOCDRecord_offset;
 
 	// output zip file function pointer
 	size_t (*write)(char *buf, uLong size, void *zi);
@@ -372,9 +373,50 @@ int Write_Zip64EOCDRecord(zip64_info *zi)
 	err = zip64local_putValue(cur, zi->entry[0].cen_offset, 8);
 	cur += 8;
 
+	zi->Zip64EOCDRecord_offset = zi->cur_offset;
 	zi->write(Zip64EOCDRecord, cur - Zip64EOCDRecord, zi);
 
 	free(Zip64EOCDRecord);
+	return err;
+}
+
+int Write_Zip64EOCDLocator(zip64_info *zi)
+{
+	int err = ZIP_OK;
+	char *cur = NULL;
+	char *Zip64EOCDLocator = NULL;
+
+	Zip64EOCDLocator = malloc(128);
+	if (Zip64EOCDLocator == NULL) {
+		printf("Zip64EOCDLocator fail\n");
+		exit(0);
+	}
+	cur = Zip64EOCDLocator;
+
+	// Zip64 EOCD Locator magic number
+	err = zip64local_putValue(cur, (uLong)ZIP64ENDLOCHEADERMAGIC, 4);
+	cur += 4;
+
+	// num of disks with the start of zip64 EOCD
+	err = zip64local_putValue(cur, (uLong)0, 4);
+	cur += 4;
+
+	// Relative offset to the Zip64EndOfCentralDirectory
+	err = zip64local_putValue(cur, (uLong)zi->Zip64EOCDRecord_offset, 8);
+	cur += 8;
+
+	// total number of disks
+	err = zip64local_putValue(cur, (uLong)1, 4);
+	cur += 4;
+
+	size_t ret = zi->write(Zip64EOCDLocator, cur - Zip64EOCDLocator, zi);
+	if (ret != (cur - Zip64EOCDLocator)) {
+		printf("Locator write fail\n");
+		exit(0);
+	}
+
+	free(Zip64EOCDLocator);
+
 	return err;
 }
 
@@ -785,6 +827,9 @@ int main(int argc, char *argv[])
 
 	// Add ZIP64 EOCD record
 	err = Write_Zip64EOCDRecord(zi);
+
+	// Add Zip64 EOCD Locator
+	err = Write_Zip64EOCDLocator(zi);
 
 
 
