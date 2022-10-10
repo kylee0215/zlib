@@ -420,6 +420,56 @@ int Write_Zip64EOCDLocator(zip64_info *zi)
 	return err;
 }
 
+int Write_EOCDRecord(zip64_info *zi)
+{
+	int err = ZIP_OK;
+	char *cur = NULL;
+	char *EOCDRecord = NULL;
+
+	EOCDRecord = malloc(128);
+	if (EOCDRecord == NULL) {
+		printf("EOCDRecord fail\n");
+		exit(0);
+	}
+	cur = EOCDRecord;
+
+	// EOCD record magic number
+	err = zip64local_putValue(cur, (uLong)ENDHEADERMAGIC, 4);
+	cur += 4;
+
+	// num of this disk
+	err = zip64local_putValue(cur, 0, 2); // can fill with 0xffff or 0
+	cur += 2;
+
+	/* number of the disk with the start of the central directory */
+	err = zip64local_putValue(cur, 0, 2); // can fill with 0xffff or 0
+	cur += 2;
+
+	/* number of entries in the central dir on this disk */
+	err = zip64local_putValue(cur, zi->number_entry, 2); // can fill with 0xffff
+	cur += 2;
+
+	/* total number of entries in the central dir */
+	err = zip64local_putValue(cur, zi->number_entry, 2); // can fill with 0xffff
+	cur += 2;
+
+	/* size of the central directory */
+	err = zip64local_putValue(cur, zi->size_centraldir, 4); // can fill with 0xffffffff
+	cur += 4;
+
+	/* offset of start of central directory with respect to the starting disk number */
+	err = zip64local_putValue(cur, zi->entry[0].cen_offset, 4); // can fill with 0xffffffff
+	cur += 4;
+
+	// comment length
+	err = zip64local_putValue(cur, 0, 2); // can fill with 0xffff
+	cur += 2;
+
+	zi->write(EOCDRecord, cur - EOCDRecord, zi);
+
+	free(EOCDRecord);
+	return err;
+}
 zip64_info *InitZipStruct(char *out_zip_filename, bool init)
 {
 	zip64_info *zi = malloc(sizeof(*zi));
@@ -831,7 +881,8 @@ int main(int argc, char *argv[])
 	// Add Zip64 EOCD Locator
 	err = Write_Zip64EOCDLocator(zi);
 
-
+	// Add EOCD record
+	err = Write_EOCDRecord(zi);
 
 	return 0;
 }
