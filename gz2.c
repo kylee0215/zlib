@@ -10,6 +10,8 @@
 #define MAXFILENAME (256)
 
 #define Z_BUFSIZE (64 * 1024)
+#define VersionMadeBy (45)
+#define VersionNeeded (45)
 
 #define ZIP_OK                          (0)
 #define ZIP_EOF                         (0)
@@ -170,6 +172,7 @@ int Write_LocalFileHeader(zip64_info *zi, char *filenameinzip, int level)
 		cur += size_filename;
 	}
 
+	// Add Extra Information Header for 'ZIP64 information'
 	// zip64 extende information extra field
 	short HeaderID = 1;
 	short DataSize = 16;
@@ -199,8 +202,120 @@ int Write_LocalFileHeader(zip64_info *zi, char *filenameinzip, int level)
 	/* zi->entry[zi->cur_entry].=; */
 
 	size_t ret = zi->write(LocalFileHdr, zi->entry[zi->cur_entry].LocHdrSize, zi);
+	free(LocalFileHdr);
 	/* zi->zi->cur_entry++; */
 	/* zi->number_entry++; */
+
+	return ZIP_OK;
+}
+
+int Write_CentralFileHeader(zip64_info *zi)
+{
+	int i;
+	char *cur = NULL;
+	char *CentralDirFileHdr = NULL;
+	uLong invalidValue = 0xffffffff;
+
+	CentralDirFileHdr = malloc(128);
+
+	for (i = 0; i < zi->number_entry; i++) {
+		cur = CentralDirFileHdr;
+
+		zip64local_putValue(cur, CENTRALHEADERMAGIC, 4);
+		cur += 4;
+
+		zip64local_putValue(cur, VersionMadeBy, 2);
+		cur += 2;
+
+		zip64local_putValue(cur, VersionNeeded, 2);
+		cur += 2;
+
+		zip64local_putValue(cur, zi->entry[i].flag, 2);
+		cur += 2;
+
+		zip64local_putValue(cur, zi->entry[i].method, 2);
+		cur += 2;
+
+		zip64local_putValue(cur, 0, 2); // Mod:time
+		cur += 2;
+
+		zip64local_putValue(cur, 0, 2); // Mod:date
+		cur += 2;
+
+		zip64local_putValue(cur, zi->entry[i].crc32, 4);
+		cur += 4;
+
+		// Compressed size
+		// set 0xffffffff for zip64, real compressed size is set in CentralDirFileHdr extra field
+		zip64local_putValue(cur, invalidValue, 4);
+		cur += 4;
+
+		// Uncompressed size
+		// set 0xffffffff for zip64, real Uncompressed size is set in CentralDirFileHdr extra field
+		zip64local_putValue(cur, invalidValue, 4);
+		cur += 4;
+
+		// File name length
+		zip64local_putValue(cur, strlen(zi->entry[i].filename), 2);
+		cur += 2;
+
+		// Extra field length
+		zip64local_putValue(cur, 2 + 2 + 8 + 8 + 8, 2); // HdrID + SizeOfExtraFieldTrunk + UncompressedDataSize + CompressedSize + OffsetOfLocalHdrRecord
+		cur += 2;
+
+		// File comment length
+		zip64local_putValue(cur, 0, 2);
+		cur += 2;
+
+		// Disk nyumber where file starts
+		zip64local_putValue(cur, 0xffff, 2); // 0xffff for zip64
+		cur += 2;
+
+		// Internal file attribute
+		zip64local_putValue(cur, 0, 2);
+		cur += 2;
+
+		// External file attributes
+		zip64local_putValue(cur, 0, 4);
+		cur += 4;
+
+		// Relative offset of local file hader
+		zip64local_putValue(cur, invalidValue, 4);
+		cur += 4;
+
+		// File name
+		memcpy(cur, zi->entry[i].filename, strlen(zi->entry[i].filename));
+		cur += strlen(zi->entry[i].filename);
+
+		// Extra field
+		// Add Extra Information Header for 'ZIP64 information'
+		// zip64 extende information extra field
+		zip64local_putValue(cur, 0x0001, 2);
+		cur += 2;
+
+		zip64local_putValue(cur, 8 + 8 + 8, 2); // UncompressedDataSize + CompressedSize + OffsetOfLocalHdrRecord
+		cur += 2;
+
+		zip64local_putValue(cur, zi->entry[i].totalUncompressedData, 8);
+		cur += 8;
+
+		zip64local_putValue(cur, zi->entry[i].totalCompressedData, 8);
+		cur += 8;
+
+		zip64local_putValue(cur, zi->entry[i].loc_offset, 8);
+		cur += 8;
+
+		if (i == 0)
+			zi->entry[i].cen_offset = zi->cur_offset; // save Offset of start of central directory
+
+		size_t ret = zi->write(CentralDirFileHdr, cur - CentralDirFileHdr, zi);
+		if (ret != cur - CentralDirFileHdr) {
+			printf("not match size, ret: %d, central size: %d\n", ret, cur-CentralDirFileHdr);
+			exit(0);
+		}
+		memset(CentralDirFileHdr, 0, sizeof(CentralDirFileHdr));
+	}
+	free(CentralDirFileHdr);
 
 	return ZIP_OK;
 }
@@ -516,6 +631,7 @@ int zipCloseFileInZip(zip64_info *zi)
 	zi->number_entry++;
 	zi->cur_entry++;
 
+	printf("%s: ret: %d\n", __func__, err);
 	return err;
 }
 
@@ -581,6 +697,7 @@ int main(int argc, char *argv[])
 			if (size_read > 0) {
 				printf("size_read: %d,buf: %s\n", size_read, buf);
 				err = zipWriteInFileInZip(zi, buf, (unsigned)size_read);
+				printf("zipWrite: err: %d\n", err);
 				if (err < 0) {
 					printf("error in writing %s\n", filenameinzip);
 					return -1;
@@ -602,5 +719,13 @@ int main(int argc, char *argv[])
 			exit(0);
 		}
 	}
+
+
+	// Add CentralDirFileHdr
+	printf("write central header\n");
+	err = Write_CentralFileHeader(zi);
+
+
+
 	return 0;
 }
