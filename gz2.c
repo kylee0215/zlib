@@ -23,8 +23,8 @@
 #define LOCALHEADERMAGIC    (0x04034b50)
 #define CENTRALHEADERMAGIC  (0x02014b50)
 #define ENDHEADERMAGIC      (0x06054b50)
-#define ZIP64ENDHEADERMAGIC      (0x6064b50)
-#define ZIP64ENDLOCHEADERMAGIC   (0x7064b50)
+#define ZIP64ENDHEADERMAGIC      (0x06064b50)
+#define ZIP64ENDLOCHEADERMAGIC   (0x07064b50)
 
 typedef unsigned int uInt;
 typedef unsigned long uLong;
@@ -51,6 +51,7 @@ typedef struct {
 	zip_entry_info entry[128];
 	char out_zip[256];
 	uLong cur_offset;
+	uLong size_centraldir;
 	unsigned char buffered_data[Z_BUFSIZE];
 	uInt pos_in_buffered_data;
 
@@ -313,11 +314,68 @@ int Write_CentralFileHeader(zip64_info *zi)
 			printf("not match size, ret: %d, central size: %d\n", ret, cur-CentralDirFileHdr);
 			exit(0);
 		}
+		zi->size_centraldir += (cur - CentralDirFileHdr);
 		memset(CentralDirFileHdr, 0, sizeof(CentralDirFileHdr));
 	}
 	free(CentralDirFileHdr);
 
 	return ZIP_OK;
+}
+
+int Write_Zip64EOCDRecord(zip64_info *zi)
+{
+	int err = ZIP_OK;
+	uLong Zip64DataSize = 44;
+	char *cur = NULL;
+	char *Zip64EOCDRecord= NULL;
+
+	Zip64EOCDRecord = malloc(128);
+	if (Zip64EOCDRecord == NULL) {
+		printf("Zip64EOCDRecord fail\n");
+		exit(0);
+	}
+	cur = Zip64EOCDRecord;
+
+	err = zip64local_putValue(cur, (uLong)ZIP64ENDHEADERMAGIC, 4); // Zip64 EOCD record magic number
+	cur += 4;
+
+	err = zip64local_putValue(cur, Zip64DataSize, 8); // size of the EOCD64 minus 12
+	cur += 8;
+
+	err = zip64local_putValue(cur, VersionMadeBy, 2);
+	cur += 2;
+
+	err = zip64local_putValue(cur, VersionNeeded, 2);
+	cur += 2;
+
+	// Number of this disk
+	err = zip64local_putValue(cur, 0, 4);
+	cur += 4;
+
+	/* number of the disk with the start of the central directory */
+	err = zip64local_putValue(cur, 0, 4);
+	cur += 4;
+
+	/* total number of entries in the central dir on this disk */
+	err = zip64local_putValue(cur, zi->number_entry, 8);
+	cur += 8;
+
+	/* total number of entries in the central dir */
+	err = zip64local_putValue(cur, zi->number_entry, 8);
+	cur += 8;
+
+	/* size of the central directory */
+	err = zip64local_putValue(cur, zi->size_centraldir, 8);
+	cur += 8;
+
+	/* offset of start of central directory with respect to the starting disk number */
+	err = zip64local_putValue(cur, zi->entry[0].cen_offset, 8);
+	cur += 8;
+
+	zi->write(Zip64EOCDRecord, cur - Zip64EOCDRecord, zi);
+
+	free(Zip64EOCDRecord);
+	return err;
 }
 
 zip64_info *InitZipStruct(char *out_zip_filename, bool init)
@@ -724,6 +782,9 @@ int main(int argc, char *argv[])
 	// Add CentralDirFileHdr
 	printf("write central header\n");
 	err = Write_CentralFileHeader(zi);
+
+	// Add ZIP64 EOCD record
+	err = Write_Zip64EOCDRecord(zi);
 
 
 
