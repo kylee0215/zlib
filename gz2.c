@@ -470,23 +470,21 @@ int Write_EOCDRecord(zip64_info *zi)
 	free(EOCDRecord);
 	return err;
 }
-zip64_info *InitZipStruct(char *out_zip_filename, bool init)
+void InitZipStruct(zip64_info *zi, char *out_zip_filename, bool init)
 {
-	zip64_info *zi = malloc(sizeof(*zi));
-
 	if (init) {
 		memset(zi, 0, sizeof(*zi));
 		zi->write = out_zip_write;
 		strcpy(zi->out_zip, out_zip_filename);
 	}
 
+	memset(&zi->stream, 0, sizeof(zi->stream));
 	zi->stream.avail_in = (uInt)0;
 	zi->stream.avail_out = (uInt)Z_BUFSIZE;
 	zi->stream.next_out = zi->buffered_data;
 	zi->stream.total_in = 0;
 	zi->stream.total_out = 0;
 	zi->stream.data_type = Z_BINARY;
-	memset(&zi->stream, 0, sizeof(zi->stream));
 
 	// We now only support Z_DEFLATED compression method
 	if (true || Z_DEFLATED) {
@@ -810,7 +808,8 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 
-	zi = InitZipStruct(filename_try, true);
+	zi = malloc(sizeof(*zi));
+	InitZipStruct(zi, filename_try, true);
 	for (i = zipfilenamearg+1; i < argc && err == ZIP_OK; i++) {
 		FILE *fin;
 		size_t size_read;
@@ -818,7 +817,7 @@ int main(int argc, char *argv[])
 		char *savefilenameinzip;
 		unsigned long crcFile = 0;
 
-		InitZipStruct(filename_try, false);
+		InitZipStruct(zi, filename_try, false);
 		size_buf = WRITEBUFFERSIZE;
 		buf = (void *)malloc(size_buf);
 		if (buf == NULL) {
