@@ -187,11 +187,9 @@ int Write_LocalFileHeader(zip64_info *zi, char *filenameinzip, int level)
 	cur += 2;
 
 	zip64local_putValue(cur, UncompressedSize, 8);
-	/* zip64local_putValue(cur, 9, 8); */
 	cur += 8;
 
 	zip64local_putValue(cur, CompressedSize, 8);
-	/* zip64local_putValue(cur, 29, 8); */
 	cur += 8;
 
 	strncpy(zi->entry[zi->cur_entry].filename, filenameinzip, size_filename);
@@ -251,19 +249,12 @@ int Write_CentralFileHeader(zip64_info *zi)
 
 		// Compressed size
 		// set 0xffffffff for zip64, real compressed size is set in CentralDirFileHdr extra field
-		/* zip64local_putValue(cur, invalidValue, 4); */
-		if (zi->entry[i].totalCompressedData >= 0xffffffff)
-			zip64local_putValue(cur, invalidValue, 4);
-		else
-			zip64local_putValue(cur, zi->entry[i].totalCompressedData, 4);
+		zip64local_putValue(cur, invalidValue, 4);
 		cur += 4;
 
 		// Uncompressed size
 		// set 0xffffffff for zip64, real Uncompressed size is set in CentralDirFileHdr extra field
-		if (zi->entry[i].totalUncompressedData >= 0xffffffff)
-			zip64local_putValue(cur, invalidValue, 4);
-		else
-			zip64local_putValue(cur, zi->entry[i].totalUncompressedData, 4);
+		zip64local_putValue(cur, invalidValue, 4);
 		cur += 4;
 
 		// File name length
@@ -279,7 +270,7 @@ int Write_CentralFileHeader(zip64_info *zi)
 		cur += 2;
 
 		// Disk nyumber where file starts
-		zip64local_putValue(cur, 0xffff, 2); // 0xffff for zip64
+		zip64local_putValue(cur, 0, 2); // 0xffff for zip64, but if we set 0xffff, we need to add disk number in extra field
 		cur += 2;
 
 		// Internal file attribute
@@ -316,10 +307,8 @@ int Write_CentralFileHeader(zip64_info *zi)
 		zip64local_putValue(cur, zi->entry[i].loc_offset, 8);
 		cur += 8;
 
-		if (i == 0) {
+		if (i == 0)
 			zi->entry[i].cen_offset = zi->cur_offset; // save Offset of start of central directory
-			printf("cen_offset: %d\n", zi->entry[0].cen_offset);
-		}
 
 		size_t ret = zi->write(CentralDirFileHdr, cur - CentralDirFileHdr, zi);
 		if (ret != cur - CentralDirFileHdr) {
@@ -377,7 +366,6 @@ int Write_Zip64EOCDRecord(zip64_info *zi)
 	cur += 8;
 
 	/* size of the central directory */
-	printf("size_centraldir: %d\n", zi->size_centraldir);
 	err = zip64local_putValue(cur, zi->size_centraldir, 8);
 	cur += 8;
 
@@ -386,7 +374,6 @@ int Write_Zip64EOCDRecord(zip64_info *zi)
 	cur += 8;
 
 	zi->Zip64EOCDRecord_offset = zi->cur_offset;
-	printf("Zip64EOCDRecord_offset: %d\n", zi->Zip64EOCDRecord_offset);
 	zi->write(Zip64EOCDRecord, cur - Zip64EOCDRecord, zi);
 
 	free(Zip64EOCDRecord);
@@ -499,18 +486,21 @@ zip64_info *InitZipStruct(char *out_zip_filename, bool init)
 	zi->stream.total_in = 0;
 	zi->stream.total_out = 0;
 	zi->stream.data_type = Z_BINARY;
+	memset(&zi->stream, 0, sizeof(zi->stream));
 
 	// We now only support Z_DEFLATED compression method
 	if (true || Z_DEFLATED) {
 		int windowBits = 15;
-		int GZIP_ENCODING = 16;
+		/* int GZIP_ENCODING = 16; */
 
 		zi->stream.zalloc = (alloc_func)0;
 		zi->stream.zfree = (free_func)0;
 		zi->stream.opaque = (voidpf)0;
 
+		/* if (deflateInit2(&zi->stream, Z_BEST_SPEED, Z_DEFLATED, */
+		/* 			windowBits | GZIP_ENCODING, 8, Z_DEFAULT_STRATEGY) != Z_OK) { */
 		if (deflateInit2(&zi->stream, Z_BEST_SPEED, Z_DEFLATED,
-					windowBits | GZIP_ENCODING, 8, Z_DEFAULT_STRATEGY) != Z_OK) {
+					-windowBits, 8, Z_DEFAULT_STRATEGY) != Z_OK) {
 			printf("deflatinit2 fail\n");
 			exit(0);
 		}
