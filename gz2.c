@@ -7,6 +7,8 @@
 #include <time.h>
 #include <inttypes.h> // for uint64_t
 
+#include "zipcrypto.h"
+
 #define WRITEBUFFERSIZE (16384)
 #define MAXFILENAME (256)
 
@@ -30,6 +32,8 @@
 
 typedef unsigned int uInt;
 typedef unsigned long uLong;
+
+#define RAND_HEAD_LEN 12
 
 typedef struct {
 	char filename[256];
@@ -60,6 +64,11 @@ typedef struct {
 			unsigned tm_year:7;
 		};
 	};
+	uint16_t verifier;
+
+	uint32_t crcForCrypting;
+	uint32_t keys[3];	 /* keys defining the pseudo-random sequence */
+	unsigned crypt_header_size;
 } zip_entry_info;
 
 typedef struct {
@@ -77,6 +86,22 @@ typedef struct {
 	// output zip file function pointer
 	size_t (*write)(char *buf, uLong size, void *zi);
 } zip64_info;
+
+uint16_t get_verifier(zip64_info *zi)
+{
+	zip_entry_info *zei = &zi->entry[zi->cur_entry];
+	uint32_t crc = zei->crcForCrypting;
+	uint32_t dos_date = zei->mod_date << 16 | zei->mod_time;
+
+	/* Info-ZIP: ZipCrypto format: if bit 3 of flag is set, we use
+	 * high byte of 16-bit File time_t
+	 */
+	if (zei->flag & (1 << 3)) {
+		printf("flag3 is set\n");
+		return ((dos_date >> 16) & 0xff) << 8 | ((dos_date >> 8) & 0xff);
+	}
+	return ((crc >> 16) & 0xff) << 8 | ((crc >> 24) & 0xff);
+}
 
 void get_file_time(zip64_info *zi, char *filenameinzip)
 {
@@ -112,6 +137,7 @@ void get_file_time(zip64_info *zi, char *filenameinzip)
 	printf("mon: %u\n", zei->tm_mon);
 	printf("year: %u\n", zei->tm_year);
 }
+
 size_t out_zip_write(char *buf, uLong size, void *zi)
 {
 	FILE *fout;
@@ -150,13 +176,39 @@ int zip64local_putValue(char *outbuf, uint64_t x, int nbByte)
 }
 
 
-int Write_LocalFileHeader(zip64_info *zi, char *filenameinzip, int level)
+int Write_EncryptHeader(zip64_info *zi, char *password)
+{
+
+	int err = Z_OK;
+	zip_entry_info *zei = &zi->entry[zi->cur_entry];
+
+	zei->crypt_header_size = 0;
+	if ((err == Z_OK) && (password != NULL)) {
+		uint8_t header[RAND_HEAD_LEN];
+		unsigned int HdrSize;
+
+		HdrSize = encrypt_init(header, zei->keys, password, zei->verifier);
+		zei->crypt_header_size = HdrSize;
+
+		size_t ret = zi->write(header, HdrSize, zi);
+		if (ret != HdrSize) {
+			printf("encrypt header write fail, ret: %d, HdrSize: %d\n", ret, HdrSize);
+			exit(0);
+		}
+	}
+	return ZIP_OK;
+}
+
+int Write_LocalFileHeader(zip64_info *zi, char *filenameinzip, int level, char *password)
 {
 	int err;
 	char *LocalFileHdr = NULL;
 	char *cur;
 	uInt size_extrafield = 2 + 2 + 16; // hdr + size + uncompress_size + compress_size for zip64
 	uLong flag = 0;
+
+	if (password)
+		flag |= 1;
 
 	if (level == Z_BEST_SPEED)
 		flag |= 6;
@@ -228,7 +280,12 @@ int Write_LocalFileHeader(zip64_info *zi, char *filenameinzip, int level)
 	zi->entry[zi->cur_entry].flag = flag;
 	zi->entry[zi->cur_entry].method = Z_DEFLATED;
 	zi->entry[zi->cur_entry].zip64 = 1;
-	zi->entry[zi->cur_entry].encrypt = 0;
+
+	if (flag & 0x1)
+		zi->entry[zi->cur_entry].encrypt = 1;
+	else
+		zi->entry[zi->cur_entry].encrypt = 0;
+
 	zi->entry[zi->cur_entry].loc_offset = zi->cur_offset;
 	zi->entry[zi->cur_entry].LocHdrSize = cur - LocalFileHdr;
 	/* zi->cur_offset += zi->entry[zi->cur_entry].LocHdrSize; */
@@ -738,6 +795,17 @@ int zip64FlushWriteBuffer(zip64_info *zi)
 {
 	int err = ZIP_OK;
 
+	if (zi->entry[zi->cur_entry].encrypt != 0) {
+		printf("%s:%d\n", __func__, __LINE__);
+		printf("pos_in_buffered_data: %d\n", zi->pos_in_buffered_data);
+		uInt i;
+		int t;
+		for (i=0;i<zi->pos_in_buffered_data;i++) {
+			/* printf("i:%d\n", i); */
+			zi->buffered_data[i] = crypt_encode(zi->entry[zi->cur_entry].keys, zi->buffered_data[i], t);
+		}
+		printf("%s:%d\n", __func__, __LINE__);
+	}
 	size_t ret = zi->write(zi->buffered_data, zi->pos_in_buffered_data, zi);
 	if (ret != zi->pos_in_buffered_data) {
 		printf("write not match: ret: %ld, pos_in_buffered_data:%d\n", ret, zi->pos_in_buffered_data);
@@ -816,25 +884,32 @@ int zipCloseFileInZip(zip64_info *zi)
 			zi->pos_in_buffered_data += (uInt)zi->stream.total_out - uTotalOutBefore;
 		}
 	}
+	printf("%s:%d\n", __func__, __LINE__);
 	if (err == Z_STREAM_END)
 		err = ZIP_OK; // This is normal
 	else {
 		printf("%s zip finish fail\n", zi->entry[zi->cur_entry].filename);
 		exit(0);
 	}
+	printf("%s:%d\n", __func__, __LINE__);
 
 	// Write Z_FINISH metadata and the last part of data
 	if (zi->pos_in_buffered_data > 0 && err == ZIP_OK) {
+		printf("%s:%d\n", __func__, __LINE__);
 		if (zip64FlushWriteBuffer(zi) == ZIP_ERRNO) {
 			printf("after finish still has data %s\n", zi->entry[zi->cur_entry].filename);
 			exit(0);
 		}
+		printf("%s:%d\n", __func__, __LINE__);
 	}
 	if (zi->entry[zi->cur_entry].method == Z_DEFLATED) {
 		int tmp_err = deflateEnd(&zi->stream);
 		if (err == ZIP_OK)
 			err = tmp_err;
 	}
+
+	printf("%s:%d\n", __func__, __LINE__);
+	zi->entry[zi->cur_entry].totalCompressedData += zi->entry[zi->cur_entry].crypt_header_size;
 
 	printf("%s: ret: %d\n", __func__, err);
 	return err;
@@ -849,6 +924,8 @@ int main(int argc, char *argv[])
 	zip64_info *zi;
 	char filename_try[256] = {0};
 	int err = 0;
+	char *password = "1234";
+	// password = NULL;
 
 	if (argc > 1) {
 		for (i = 1; i < argc; i++) {
@@ -881,8 +958,13 @@ int main(int argc, char *argv[])
 
 		get_file_time(zi, filenameinzip);
 
-		Write_LocalFileHeader(zi, filenameinzip, Z_BEST_SPEED); // Add local header for this entry
-		/* err = getFileCrc(filenameinzip, buf, size_buf, &crcFile); */
+		/* err = getFileCrc(filenameinzip, buf, size_buf, &zi->entry[zi->cur_entry].crcForCrypting); */
+
+		Write_LocalFileHeader(zi, filenameinzip, Z_BEST_SPEED, password); // Add local header for this entry
+
+		zi->entry[zi->cur_entry].verifier = get_verifier(zi);
+
+		Write_EncryptHeader(zi, password);
 		/* zi->entry[zi->cur_entry-1].crc32 = crcFile; */
 		/* struct stat st; */
 		/* stat(filenameinzip, &st); */
@@ -945,6 +1027,8 @@ int main(int argc, char *argv[])
 
 	// Add EOCD record
 	err = Write_EOCDRecord(zi);
+
+	printf("zip finish\n");
 
 	return 0;
 }
