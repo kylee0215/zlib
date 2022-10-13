@@ -25,6 +25,7 @@
 #define ENDHEADERMAGIC      (0x06054b50)
 #define ZIP64ENDHEADERMAGIC      (0x06064b50)
 #define ZIP64ENDLOCHEADERMAGIC   (0x07064b50)
+#define ZIP64DATADESCHEADERMAGIC   (0x08074b50)
 
 typedef unsigned int uInt;
 typedef unsigned long uLong;
@@ -211,6 +212,31 @@ int Write_LocalFileHeader(zip64_info *zi, char *filenameinzip, int level)
 	return ZIP_OK;
 }
 
+int Write_DataDescriptor(zip64_info *zi)
+{
+	char *buf = malloc(128);
+
+	char *cur = buf;
+
+	zip64local_putValue(cur, ZIP64DATADESCHEADERMAGIC, 4);
+	cur += 4;
+
+	zip64local_putValue(cur, zi->entry[zi->cur_entry].crc32, 4);
+	cur += 4;
+
+	zip64local_putValue(cur, zi->entry[zi->cur_entry].totalCompressedData, 8);
+	cur += 4;
+
+	zip64local_putValue(cur, zi->entry[zi->cur_entry].totalUncompressedData, 8);
+	cur += 4;
+
+	size_t ret = zi->write(buf, cur - buf, zi);
+	if (ret != cur - buf) {
+		printf("data descript fail, ret: %d, size: %d\n", ret, cur - buf);
+		exit(0);
+	}
+	return ret;
+}
 int Write_CentralFileHeader(zip64_info *zi)
 {
 	int i;
@@ -779,9 +805,6 @@ int zipCloseFileInZip(zip64_info *zi)
 			err = tmp_err;
 	}
 
-	zi->number_entry++;
-	zi->cur_entry++;
-
 	printf("%s: ret: %d\n", __func__, err);
 	return err;
 }
@@ -870,6 +893,10 @@ int main(int argc, char *argv[])
 			printf("error in closing %s file\n", filenameinzip);
 			exit(0);
 		}
+		Write_DataDescriptor(zi);
+
+		zi->number_entry++;
+		zi->cur_entry++;
 	}
 
 
