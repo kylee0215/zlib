@@ -4,6 +4,7 @@
 #include <zlib.h>
 #include <sys/stat.h>
 #include <stdbool.h>
+#include <time.h>
 #include <inttypes.h> // for uint64_t
 
 #define WRITEBUFFERSIZE (16384)
@@ -43,6 +44,22 @@ typedef struct {
 	uint64_t LocHdrSize;
 	uint64_t loc_offset; // Relative offset of local file header for CEN
 	uint64_t cen_offset; // Offset of start of central directory, relative to start of archive for EOCD
+	union {
+		uint16_t mod_time;
+		struct {
+			unsigned tm_sec:5;
+			unsigned tm_min:6;
+			unsigned tm_hour:5;
+		};
+	};
+	union {
+		uint16_t mod_date;
+		struct {
+			unsigned tm_mday:5;
+			unsigned tm_mon:4;
+			unsigned tm_year:7;
+		};
+	};
 } zip_entry_info;
 
 typedef struct {
@@ -61,6 +78,40 @@ typedef struct {
 	size_t (*write)(char *buf, uLong size, void *zi);
 } zip64_info;
 
+void get_file_time(zip64_info *zi, char *filenameinzip)
+{
+	struct stat attr;
+	/* time_t st_mtime; */
+	struct tm *p;
+	zip_entry_info *zei = NULL;
+
+	stat(filenameinzip, &attr);
+	/* st_mtime = attr.st_mtime; */
+	p = localtime(&attr.st_mtime);
+
+	zei = &zi->entry[zi->cur_entry];
+
+	zei->tm_sec = (p->tm_sec / 2); // zip use 2 second precision
+	zei->tm_min = p->tm_min;
+	zei->tm_hour = p->tm_hour;
+	zei->tm_mday = p->tm_mday;
+	zei->tm_mon = p->tm_mon + 1; // st_mtime month range[0-11]
+	zei->tm_year = p->tm_year + 1900 - 1980; // st_mtime year start at 1900, zip start at 1980
+
+	printf("ppsec: %d\n", p->tm_sec);
+	printf("ppmin: %d\n", p->tm_min);
+	printf("pphour: %d\n", p->tm_hour);
+	printf("ppmday: %d\n", p->tm_mday);
+	printf("ppmon: %d\n", p->tm_mon);
+	printf("ppyear: %d\n", p->tm_year);
+
+	printf("sec: %u\n", zei->tm_sec);
+	printf("min: %u\n", zei->tm_min);
+	printf("hour: %u\n", zei->tm_hour);
+	printf("mday: %u\n", zei->tm_mday);
+	printf("mon: %u\n", zei->tm_mon);
+	printf("year: %u\n", zei->tm_year);
+}
 size_t out_zip_write(char *buf, uLong size, void *zi)
 {
 	FILE *fout;
@@ -80,26 +131,6 @@ size_t out_zip_write(char *buf, uLong size, void *zi)
 
 	return ret;
 }
-
-typedef struct tm_zip_s
-{
-    int tm_sec;             /* seconds after the minute - [0,59] */
-    int tm_min;             /* minutes after the hour - [0,59] */
-    int tm_hour;            /* hours since midnight - [0,23] */
-    int tm_mday;            /* day of the month - [1,31] */
-    int tm_mon;             /* months since January - [0,11] */
-    int tm_year;            /* years - [1980..2044] */
-} tm_zip;
-
-typedef struct
-{
-    tm_zip      tmz_date;       /* date in understandable format           */
-    uLong       dosDate;       /* if dos_date == 0, tmu_date is used      */
-/*    uLong       flag;        */   /* general purpose bit flag        2 bytes */
-
-    uLong       internal_fa;    /* internal file attributes        2 bytes */
-    uLong       external_fa;    /* external file attributes        4 bytes */
-} zip_fileinfo;
 
 int zip64local_putValue(char *outbuf, uint64_t x, int nbByte)
 {
@@ -148,10 +179,10 @@ int Write_LocalFileHeader(zip64_info *zi, char *filenameinzip, int level)
 	err = zip64local_putValue(cur, Z_DEFLATED, 2);
 	cur += 2;
 
-	err = zip64local_putValue(cur, 0x0, 2); // Mod:time
+	err = zip64local_putValue(cur, zi->entry[zi->cur_entry].mod_time, 2); // Mod:time
 	cur += 2;
 
-	err = zip64local_putValue(cur, 0x0, 2); // Mod:date
+	err = zip64local_putValue(cur, zi->entry[zi->cur_entry].mod_date, 2); // Mod:date
 	cur += 2;
 
 	// CRC / Compressed size / Uncompressed size will be filled in later and rewritten later
@@ -264,10 +295,10 @@ int Write_CentralFileHeader(zip64_info *zi)
 		zip64local_putValue(cur, zi->entry[i].method, 2);
 		cur += 2;
 
-		zip64local_putValue(cur, 0, 2); // Mod:time
+		zip64local_putValue(cur, zi->entry[i].mod_time, 2); // Mod:time
 		cur += 2;
 
-		zip64local_putValue(cur, 0, 2); // Mod:date
+		zip64local_putValue(cur, zi->entry[i].mod_date, 2); // Mod:date
 		cur += 2;
 
 		zip64local_putValue(cur, zi->entry[i].crc32, 4);
@@ -847,6 +878,8 @@ int main(int argc, char *argv[])
 			printf("Error allocating memory\n");
 			return -1;
 		}
+
+		get_file_time(zi, filenameinzip);
 
 		Write_LocalFileHeader(zi, filenameinzip, Z_BEST_SPEED); // Add local header for this entry
 		/* err = getFileCrc(filenameinzip, buf, size_buf, &crcFile); */
