@@ -30,6 +30,8 @@
 #define ZIP64ENDLOCHEADERMAGIC   (0x07064b50)
 #define ZIP64DATADESCHEADERMAGIC   (0x08074b50)
 
+#define ZIPCRYPTO 1
+
 typedef unsigned int uInt;
 typedef unsigned long uLong;
 
@@ -207,8 +209,10 @@ int Write_LocalFileHeader(zip64_info *zi, char *filenameinzip, int level, char *
 	uInt size_extrafield = 2 + 2 + 16; // hdr + size + uncompress_size + compress_size for zip64
 	uLong flag = 0;
 
+#if ZIPCRYPTO
 	if (password)
 		flag |= 1;
+#endif
 
 	if (level == Z_BEST_SPEED)
 		flag |= 6;
@@ -658,6 +662,7 @@ int zip64FlushWriteBuffer(zip64_info *zi)
 {
 	int err = ZIP_OK;
 
+#if ZIPCRYPTO
 	if (zi->entry[zi->cur_entry].encrypt != 0) {
 		printf("%s:%d\n", __func__, __LINE__);
 		printf("pos_in_buffered_data: %d\n", zi->pos_in_buffered_data);
@@ -669,6 +674,8 @@ int zip64FlushWriteBuffer(zip64_info *zi)
 		}
 		printf("%s:%d\n", __func__, __LINE__);
 	}
+#endif
+
 	size_t ret = zi->write(zi->buffered_data, zi->pos_in_buffered_data, zi);
 	if (ret != zi->pos_in_buffered_data) {
 		printf("write not match: ret: %ld, pos_in_buffered_data:%d\n", ret, zi->pos_in_buffered_data);
@@ -827,7 +834,9 @@ int main(int argc, char *argv[])
 
 		zi->entry[zi->cur_entry].verifier = get_verifier(zi);
 
+#if ZIPCRYPTO
 		Write_EncryptHeader(zi, password);
+#endif
 		/* zi->entry[zi->cur_entry-1].crc32 = crcFile; */
 		/* struct stat st; */
 		/* stat(filenameinzip, &st); */
