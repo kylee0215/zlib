@@ -317,10 +317,10 @@ int Write_DataDescriptor(zip64_info *zi)
 	cur += 4;
 
 	zip64local_putValue(cur, zi->entry[zi->cur_entry].totalCompressedData, 8);
-	cur += 4;
+	cur += 8;
 
 	zip64local_putValue(cur, zi->entry[zi->cur_entry].totalUncompressedData, 8);
-	cur += 4;
+	cur += 8;
 
 	size_t ret = zi->write(buf, cur - buf, zi);
 	if (ret != cur - buf) {
